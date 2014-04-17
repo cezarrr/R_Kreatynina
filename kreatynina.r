@@ -12,6 +12,7 @@ library(FSelector)
 
 source("GetWhichHighestNumber.r")
 source("DrawSubsetCorrgram.r")
+source("CreateDfFromAttributes.r")
 
 #wczytujemy baze - pierwszy wiersz naglowkowy
 df_base <- read.csv("BAZA_kreatynina.csv",header=TRUE)
@@ -69,6 +70,7 @@ namesOfTests <- c("linear.correlation","rank.correlation","random.forest")
 
 #tworzymy dataframe z wynikami selekcji
 selectionResults<-as.data.frame(setNames(replicate(length(namesOfTests),numeric(0), simplify = F), namesOfTests))
+selectionResultsR2<-as.data.frame(setNames(replicate(length(namesOfTests),numeric(0), simplify = F), namesOfTests))
 weights <- list(namesOfTests)
 
 #iterujemy po metodach selekcji atrybutow
@@ -91,6 +93,8 @@ for (algor in namesOfTests){
     sub_base <- reduced_base[, which(names(reduced_base) %in% c(sub_set,"kreat_1"))]
     testRes<-dmr.claseval::crossval(rpart,kreat_1~.,sub_base,k=10,n=5)
     selectionResults[toString(i),algor]<-dmr.regeval::r2(testRes$pred, testRes$true)
+    #sprawdzmy takze dodatkowo korelacje przewidywanych wynikow z rzeczywistymi
+    selectionResultsR2[toString(i),algor]<-cor(testRes$pred, testRes$true)
   }
 }
 
@@ -103,21 +107,32 @@ for (algor in namesOfTests){
   dev.off()
 }
 
+#rysujemy zaleznosc korelacji rzeczywistych wynikow z przewidywaniami od mocy podzbioru atrybutow
+for (algor in namesOfTests){
+  png(paste("plots/","RegCor_",algor,".png",sep=""),width=600,height=600)
+  plot(n_lengths,selectionResultsR2[,algor],
+       type="o",xlab="Moc podzbioru atrybutow",ylab="Korelacja prawdziwych oraz przewidywanych wartosci funkcji docelowej",
+       main=paste("Zaleznosc korelacji prawdziwych oraz przewidywanych wartosci funkcji docelowej determinacji \nod mocy podzbioru atrybutow dla ",algor,sep=""))
+  dev.off()
+}
+
 # wybieramy atrybuty za pomoca CFS
 cfsAtts <- cfs(formula=kreat_1~.,data=reduced_base)
 
 # wybieramy najlepsze testy (kryterium - najwieksze R2)
-#z puli 
+#z pelnej rozpatrywanej puli 
 selectedAtts<-GetWhichHighestNumber(selectionResults)
 selectedSubsets<-list()
 for (t in namesOfTests){
   attVec<-cutoff.k(weights[[t]],selectedAtts[1,t])
-  selectedSubsets[[t]]<-reduced_base[, which(names(reduced_base) %in% c(attVec,"kreat_1"))]
+  selectedSubsets[[t]]<-CreateDfFromAttributes(reduced_base,attVec,"kreat_1")
 }
-selectedSubsets[["cfs"]]<- reduced_base[, which(names(reduced_base) %in% c(cfsAtts,"kreat_1"))]
+#dodajemy takze atrybuty z cfs
+selectedSubsets[["cfs"]]<- CreateDfFromAttributes(reduced_base,cfsAtts,"kreat_1")
 
 extendedNamesOfTests<-c(namesOfTests,"cfs")
 
+#rysujemy korelogramy dla wybranych metod selekcji atrybutow 
 for(corGraph in extendedNamesOfTests){
   png(paste("plots/","corrgram",corGraph,".png",sep=""),width=600,height=600)
   DrawSubsetCorrgram(selectedSubsets[[corGraph]],corGraph)
