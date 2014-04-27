@@ -1,5 +1,9 @@
 #!/usr/bin/env Rscript
 
+#zmienna do edytowania - parametr n w walidacji krzyzowej
+#ma najwiekszy wplyw na czas wykonania skryptu
+cv_n = 5
+
 #dolaczamy biblioteki
 library(dmr.regeval)
 library(dmr.trans)
@@ -8,6 +12,9 @@ library(dmr.linreg)
 library(rpart)
 library(dmr.claseval)
 library(FSelector)
+library(dmr.regtree)
+library(dmr.kernel)
+library(e1071)
 
 
 source("GetWhichHighestNumber.r")
@@ -59,7 +66,7 @@ abline(lm(df_base$kreat_1~df_base$kreat_w), col="red")
 dev.off()
 
 #sprawdzamy jakosc regresji walidacja krzyzowa dla calej bazy - jako punkt odniesienia dla selekcji atrybutow
-db_all_cv10<-dmr.claseval::crossval(rpart,kreat_1~.,reduced_base,k=10,n=3)
+db_all_cv10<-dmr.claseval::crossval(rpart,kreat_1~.,as.data.frame(impute(reduced_base,what="median")),k=10,n=cv_n)
 #liczymy wspolczynnik determinacji - R2
 db_all_cv10_r2<- dmr.regeval::r2(db_all_cv10$pred, db_all_cv10$true)
 mse(db_all_cv10$pred, db_all_cv10$true)
@@ -91,7 +98,7 @@ for (algor in namesOfTests){
   for (i in n_lengths){
     sub_set <- cutoff.k(weights[[algor]], i)
     sub_base <- reduced_base[, which(names(reduced_base) %in% c(sub_set,"kreat_1"))]
-    testRes<-dmr.claseval::crossval(rpart,kreat_1~.,sub_base,k=10,n=5)
+    testRes<-dmr.claseval::crossval(rpart,kreat_1~.,as.data.frame(impute(sub_base,what="median"),k=10,n=cv_n)
     selectionResults[toString(i),algor]<-dmr.regeval::r2(testRes$pred, testRes$true)
     #sprawdzmy takze dodatkowo korelacje przewidywanych wynikow z rzeczywistymi
     selectionResultsR2[toString(i),algor]<-cor(testRes$pred, testRes$true)
@@ -137,6 +144,39 @@ for(corGraph in extendedNamesOfTests){
   png(paste("plots/","corrgram",corGraph,".png",sep=""),width=600,height=600)
   DrawSubsetCorrgram(selectedSubsets[[corGraph]],corGraph)
   dev.off()
+}
+
+regressionResults<-list()
+regressionR2<-as.data.frame(setNames(replicate(length(extendedNamesOfTests),numeric(0), simplify = F), extendedNamesOfTests))
+#regressionCor<-as.data.frame(setNames(replicate(length(extendedNamesOfTests),numeric(0), simplify = F), extendedNamesOfTests))
+
+for(selection in extendedNamesOfTests){
+  #regression tree
+  tmpResults<-tune(rpart,kreat_1~.,data=as.data.frame(impute(selectedSubsets[[selection]]),what="median"),ranges = list(minsplit = c(5,10,20,30,40,50,60,80),cp=c(0.01,0.05,0.08,0.1,0.15)),
+                   tunecontrol=tune.control(nrepeat=cv_n, repeat.aggregate=mean,sampling="cross", cross=10))
+  tmpR2 <- (1 -( length(selectedSubsets[[selection]]$kreat_1)*tmpResults$best.performance/((length(selectedSubsets[[selection]]$kreat_1)-1)*var(selectedSubsets[[selection]]$kreat_1))))
+  print(paste(selection," regression tree: ",tmpR2))
+  regressionResults[[selection]][["regression tree"]] <- tmpResults
+  regressionR2["regression tree",selection] <- tmpR2
+
+  #linear regression
+  tmpResults<-tune(lm,kreat_1~.,data=as.data.frame(impute(selectedSubsets[[selection]]),what="median"),
+                   tunecontrol=tune.control(nrepeat=cv_n, repeat.aggregate=mean,sampling="cross", cross=10))
+  
+  tmpR2 <- (1 -( length(selectedSubsets[[selection]]$kreat_1)*tmpResults$best.performance/((length(selectedSubsets[[selection]]$kreat_1)-1)*var(selectedSubsets[[selection]]$kreat_1))))
+  print(paste(selection," linear regression: ",tmpR2))
+  regressionResults[[selection]][["linear regression"]] <- tmpResults
+  regressionR2["linear regression",selection] <- tmpR2
+  
+  #support vector regression
+  tmpResults<-tune(svm,kreat_1~.,data=as.data.frame(impute(selectedSubsets[[selection]]),what="median"), ranges = list(gamma = 2^(-2:1), cost = 2^(1:4)),
+                   tunecontrol=tune.control(nrepeat=cv_n, repeat.aggregate=mean,sampling="cross", cross=10))
+  
+  tmpR2 <- (1 -( length(selectedSubsets[[selection]]$kreat_1)*tmpResults$best.performance/((length(selectedSubsets[[selection]]$kreat_1)-1)*var(selectedSubsets[[selection]]$kreat_1))))
+  print(paste(selection," svr: ",tmpR2))
+  regressionResults[[selection]][["svr"]] <- tmpResults
+  regressionR2["svr",selection] <- tmpR2
+  
 }
 
 
