@@ -6,11 +6,14 @@
 
 #parametr n w walidacji krzyzowej
 #ma najwiekszy wplyw na czas wykonania skryptu
-cv_n = 5
+cv_n <- 5
+
+#parametr n w walidacji krzyzowej podczas tuningu
+cv_n_tuning <- 1
 
 #czy liczyc dodatkowo regresje (z tuningiem) dla wszystkich atrybutow
 #bardzo powolna operacja z relatywnie slabymi wynikami
-useAllAttributes=FALSE
+useAllAttributes<-FALSE
 
 #####koniec zmiennych do (czestego) edytowania#####
 
@@ -20,12 +23,12 @@ useAllAttributes=FALSE
 library(dmr.regeval)
 library(dmr.trans)
 library(dmr.util)
-library(dmr.linreg)
+#library(dmr.linreg)
 library(rpart)
 library(dmr.claseval)
 library(FSelector)
-library(dmr.regtree)
-library(dmr.kernel)
+#library(dmr.regtree)
+#library(dmr.kernel)
 library(e1071)
 
 
@@ -73,6 +76,19 @@ xfit<-seq(min(x),max(x),length=40)
 yfit<-dnorm(xfit,mean=mean(x),sd=sd(x))
 yfit <- yfit*diff(h$mids[1:2])*length(x)
 lines(xfit, yfit, col="blue", lwd=2)  
+dev.off()
+
+#szkic kernel density est.
+png(paste("plots/","density_kreat_1",".png",sep=""),width=600,height=600)
+d <- density(df_base$kreat_1)
+plot(d, main="Estymator jadrowy gestosci poziomu kreatyniny\nw pierwszym dniu po operacji", xlab="Kreatynina w 1. dniu po operacji [mg/dl]",ylab="Gestosc")
+polygon(d, col="red", border="blue") 
+dev.off()
+
+png(paste("plots/","density_log_kreat_1",".png",sep=""),width=600,height=600)
+d <- density(log(df_base$kreat_1))
+plot(d, main="Estymator jadrowy gestosci logarytmu poziomu kreatyniny\nw pierwszym dniu po operacji", xlab="Logarytm z poziomu kreatyniny w 1. dniu po operacji [mg/dl]",ylab="Gestosc")
+polygon(d, col="red", border="blue") 
 dev.off()
 
 #podejrzewamy zaleznosc kreat_1 od kreat_w - narysujmy wykres
@@ -174,7 +190,7 @@ if(useAllAttributes==TRUE){
 #tworzymy struktury, potrzebne do testu regresji
 regressionResults<-list()
 regressionR2<-as.data.frame(setNames(replicate(length(namesOfTests),numeric(0), simplify = F), namesOfTests))
-bestR2<- -5
+bestR2<- -99
 
 #####tuning#####
 
@@ -190,7 +206,7 @@ modelNames<- c("regression tree","linear regression","svr")
 for(selection in namesOfTests){
   #regression tree
   tmpResults<-tune(rpart,kreat_1~.,data=as.data.frame(impute(selectedSubsets[[selection]]),what="mean"),ranges = list(minsplit = c(5,10,20,30,40,50,60,80),cp=c(0.01,0.05,0.08,0.1,0.15)),
-                   tunecontrol=tune.control(nrepeat=cv_n, repeat.aggregate=mean,sampling="cross", cross=10))
+                   tunecontrol=tune.control(nrepeat=cv_n_tuning, repeat.aggregate=mean,sampling="cross", cross=10))
   tmpR2 <- (1 -( length(selectedSubsets[[selection]]$kreat_1)*tmpResults$best.performance/((length(selectedSubsets[[selection]]$kreat_1)-1)*var(selectedSubsets[[selection]]$kreat_1))))
   print(paste(selection," regression tree: ",tmpR2))
   regressionResults[[selection]][["regression tree"]] <- tmpResults
@@ -202,7 +218,7 @@ for(selection in namesOfTests){
   
   #linear regression
   tmpResults<-tune(lm,kreat_1~.,data=as.data.frame(impute(selectedSubsets[[selection]]),what="mean"),
-                   tunecontrol=tune.control(nrepeat=cv_n, repeat.aggregate=mean,sampling="cross", cross=10))
+                   tunecontrol=tune.control(nrepeat=cv_n_tuning, repeat.aggregate=mean,sampling="cross", cross=10))
   
   tmpR2 <- (1 -( length(selectedSubsets[[selection]]$kreat_1)*tmpResults$best.performance/((length(selectedSubsets[[selection]]$kreat_1)-1)*var(selectedSubsets[[selection]]$kreat_1))))
   print(paste(selection," linear regression: ",tmpR2))
@@ -215,7 +231,7 @@ for(selection in namesOfTests){
   
   #support vector regression 
   tmpResults<-tune(svm,kreat_1~., data=as.data.frame(impute(selectedSubsets[[selection]]),what="mean"), ranges = list(gamma = 2^(-5:1), cost = 2^(-2:1),kernel=c("polynomial","radial")),
-                   tunecontrol=tune.control(nrepeat=cv_n, repeat.aggregate=mean,sampling="cross", cross=10))
+                   tunecontrol=tune.control(nrepeat=cv_n_tuning, repeat.aggregate=mean,sampling="cross", cross=10))
   
   tmpR2 <- (1 -( length(selectedSubsets[[selection]]$kreat_1)*tmpResults$best.performance/((length(selectedSubsets[[selection]]$kreat_1)-1)*var(selectedSubsets[[selection]]$kreat_1))))
   print(paste(selection," svr: ",tmpR2))
@@ -230,15 +246,19 @@ for(selection in namesOfTests){
 
 #zapis wynikow do pliku, do pozniejszej analizy
 dir.create(file.path("results"),showWarnings=FALSE)
+
+allSelectedAtts<-selectedAtts
+allSelectedAtts$"cfs"<-length(cfsAtts)
+write.csv(allSelectedAtts,"results/numberOfSelectedAtts.csv")
+
 resultsFile <- file("results/regressionResults.txt", open = "wt")
 sink(resultsFile)
 print(regressionResults)
 
-close(resultsFile)
 #powrot do zwyklego ujscia
-sink(type = "message")
-# sink()
 
+sink()
+close(resultsFile)
 #wyniki R2
 write.csv(regressionR2,"results/regressionR2.csv")
 
@@ -280,8 +300,7 @@ bestParams<- regressionResults[namesOfTests[bestRegressionResultIndex[2]]]
 testCvR2 <-vector()
 testBootR2<-vector()
 if(bestRegressionModel=="svr"){
-  #model1 <- svm(kreat_1~.,data=bestRegressionDataFrame,gamma=bestModel$best.parameters$gamma,cost=bestModel$best.parameters$cost,kernel=bestModel$best.parameters$kernel)
-  
+  inspectModel <- svm(kreat_1~.,data=bestRegressionDataFrame,gamma=bestModel$best.parameters$gamma,cost=bestModel$best.parameters$cost,kernel=bestModel$best.parameters$kernel)
   testData<-as.data.frame(impute(bestRegressionDataFrame,what="mean"))
   #walidacja krzyzowa
   testModel1<-tune(svm,kreat_1~.,data=testData,
@@ -317,14 +336,15 @@ if(bestRegressionModel=="svr"){
   }
 }else if(bestRegressionModel=="regression tree"){
   testData<-as.data.frame(impute(bestRegressionDataFrame,what="mean"))
+  inspectModel<-rpart(kreat_1~.,data=testData, minsplit=bestModel$best.parameters$minsplit, cp=bestModel$best.parameters$cp)
   #walidacja krzyzowa
-  testModel1<-tune(svm,kreat_1~.,data=testData,
+  testModel1<-tune(rpart,kreat_1~.,data=testData,
                    minsplit=bestModel$best.parameters$minsplit, cp=bestModel$best.parameters$cp,
                    tunecontrol=tune.control(nrepeat=cv_n, repeat.aggregate=median,sampling="cross", cross=10))
   testCvR2 <- (1 -( length(testData$kreat_1)*testModel1$best.performance/((length(testData$kreat_1)-1)*var(testData$kreat_1))))
   
   #bootstraping
-  testModel1<-tune(svm,kreat_1~.,data=testData,
+  testModel1<-tune(rpart,kreat_1~.,data=testData,
                    minsplit=bestModel$best.parameters$minsplit, cp=bestModel$best.parameters$cp,
                    tunecontrol=tune.control(sampling="boot", nboot = cv_n*10, boot.size = 1))
   testBootR2 <- (1 -( length(testData$kreat_1)*testModel1$best.performance/((length(testData$kreat_1)-1)*var(testData$kreat_1))))
@@ -337,13 +357,13 @@ if(bestRegressionModel=="svr"){
     testData <- as.data.frame(impute(CreateDfFromAttributes(fullDF=df_base,atts=colnames(kreatBase),additionalAtt=kreat),what="mean"))
     
     #walidacja krzyzowa
-    testModel<- tune(svm,as.formula(paste(kreat,"~.")),data=testData,minsplit=bestModel$best.parameters$minsplit, cp=bestModel$best.parameters$cp,
+    testModel<- tune(rpart,as.formula(paste(kreat,"~.")),data=testData,minsplit=bestModel$best.parameters$minsplit, cp=bestModel$best.parameters$cp,
                      tunecontrol=tune.control(nrepeat=cv_n, repeat.aggregate=median,sampling="cross", cross=10))
     tmpR2<-(1 -( (dim(testData)[1])*testModel$best.performance/((dim(testData)[1]-1)*var(testData[,length(testData)]))))
     testCvR2<-c(testCvR2,tmpR2)
     
     #bootstraping
-    testModel<- tune(svm,as.formula(paste(kreat,"~.")),data=testData,minsplit=bestModel$best.parameters$minsplit, cp=bestModel$best.parameters$cp,
+    testModel<- tune(rpart,as.formula(paste(kreat,"~.")),data=testData,minsplit=bestModel$best.parameters$minsplit, cp=bestModel$best.parameters$cp,
                      tunecontrol=tune.control(sampling="boot", nboot = cv_n*10, boot.size = 1))
     tmpBootR2<-(1 -( (dim(testData)[1])*testModel$best.performance/((dim(testData)[1]-1)*var(testData[,length(testData)]))))
     testBootR2<-c(testBootR2,tmpBootR2)
